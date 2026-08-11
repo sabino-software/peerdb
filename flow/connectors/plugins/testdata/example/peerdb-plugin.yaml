@@ -1,0 +1,49 @@
+$schema: https://peerdb.io/schemas/plugin-manifest/v1alpha1.json
+apiVersion: peerdb.io/plugin/v1alpha1
+kind: ConnectorPlugin
+metadata:
+  id: io.peerdb.example
+  displayName: PeerDB Example Connector
+  version: 0.1.0
+  description: Runnable documentation fixture for the connector process contract.
+  vendor: PeerDB
+  homepage: https://github.com/PeerDB-io/peerdb
+  license: BUSL-1.1
+spec:
+  lifecycle: experimental
+  protocol:
+    major: 1
+    minor: 0
+  coreVersions:
+    minimum: 1.0.0
+    maximumExclusive: 2.0.0
+  runtime:
+    mode: process
+    entrypoint: bin/peerdb-plugin-example
+  dependencies: []
+  connectors:
+    - id: example
+      displayName: Example
+      description: Demonstrates source metadata without loading connector code in-process.
+      legacyDbTypes: []
+      roles: [source]
+      capabilities:
+        - name: control
+          version: 1
+        - name: cdc.source
+          version: 1
+      recordFormats: [qvalue-proto-v1]
+      stability: experimental
+      config:
+        schema: schemas/config.schema.json
+        uiHints: schemas/ui-hints.json
+        schemaVersion: 1
+        secretJsonPointers: [/apiKey]
+        placeholder: false
+artifact:
+  status: built
+  bundles:
+    - platform: linux/amd64
+      digest: sha256:af94ac57a9abce57bc1204f4b01eee6135d23e54e3bfcb4736007b6ec45175f0
+    - platform: linux/arm64
+      digest: sha256:af94ac57a9abce57bc1204f4b01eee6135d23e54e3bfcb4736007b6ec45175f0

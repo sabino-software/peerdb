@@ -1,0 +1,1553 @@
+syntax = "proto3";
+
+package peerdb.plugin.v1;
+
+import "google/protobuf/duration.proto";
+import "google/protobuf/struct.proto";
+import "google/protobuf/timestamp.proto";
+
+// The PeerDB connector plugin protocol is a process boundary. It intentionally
+// does not expose Go interfaces, channels, catalog connections, Temporal
+// objects, or connector implementation types.
+
+service PluginControlService {
+  rpc Handshake(HandshakeRequest) returns (HandshakeResponse);
+  rpc Describe(DescribeRequest) returns (DescribeResponse);
+  rpc Health(HealthRequest) returns (HealthResponse);
+  rpc Drain(DrainRequest) returns (DrainResponse);
+  rpc OpenSession(OpenSessionRequest) returns (OpenSessionResponse);
+  rpc RenewSession(RenewSessionRequest) returns (RenewSessionResponse);
+  rpc CloseSession(CloseSessionRequest) returns (CloseSessionResponse);
+  rpc Validate(ValidateRequest) returns (ValidateResponse);
+  rpc MigrateConfig(MigrateConfigRequest) returns (MigrateConfigResponse);
+  rpc Shutdown(ShutdownRequest) returns (ShutdownResponse);
+}
+
+service SchemaService {
+  rpc GetSchemas(GetSchemasRequest) returns (GetSchemasResponse);
+  rpc GetTables(GetTablesRequest) returns (GetTablesResponse);
+  rpc GetColumns(GetColumnsRequest) returns (GetColumnsResponse);
+  rpc GetTableSchemas(GetTableSchemasRequest) returns (GetTableSchemasResponse);
+}
+
+service CdcSourceService {
+  rpc EnsurePullability(EnsurePullabilityRequest) returns (EnsurePullabilityResponse);
+  rpc BeginSnapshot(BeginSnapshotRequest) returns (BeginSnapshotResponse);
+  rpc KeepSnapshotAlive(KeepSnapshotAliveRequest) returns (KeepSnapshotAliveResponse);
+  rpc FinishSnapshot(FinishSnapshotRequest) returns (FinishSnapshotResponse);
+  rpc SetupReplication(SetupReplicationRequest) returns (SetupReplicationResponse);
+  rpc KeepReplicationAlive(KeepReplicationAliveRequest) returns (KeepReplicationAliveResponse);
+  rpc CloseReplication(CloseReplicationRequest) returns (CloseReplicationResponse);
+  rpc CleanupReplication(CleanupReplicationRequest) returns (CleanupReplicationResponse);
+  rpc Pull(stream CdcSourceServicePullRequest) returns (stream CdcSourceServicePullResponse);
+}
+
+service CdcDestinationService {
+  rpc NeedsMetadataSetup(NeedsMetadataSetupRequest) returns (NeedsMetadataSetupResponse);
+  rpc SetupMetadata(SetupMetadataRequest) returns (SetupMetadataResponse);
+  rpc CreateRawTable(CreateRawTableRequest) returns (CreateRawTableResponse);
+  rpc ReplaySchemaDeltas(ReplaySchemaDeltasRequest) returns (ReplaySchemaDeltasResponse);
+  rpc Cleanup(CdcDestinationServiceCleanupRequest) returns (CdcDestinationServiceCleanupResponse);
+  rpc GetBatchStatus(GetBatchStatusRequest) returns (GetBatchStatusResponse);
+  rpc GetLastSyncBatch(GetLastSyncBatchRequest) returns (GetLastSyncBatchResponse);
+  rpc Push(stream CdcDestinationServicePushRequest) returns (stream CdcDestinationServicePushResponse);
+  rpc Normalize(NormalizeRequest) returns (NormalizeResponse);
+}
+
+service QRepSourceService {
+  rpc GetPartitions(GetPartitionsRequest) returns (GetPartitionsResponse);
+  rpc GetDefaultPartitionKeys(GetDefaultPartitionKeysRequest) returns (GetDefaultPartitionKeysResponse);
+  rpc EstimateTableSize(EstimateTableSizeRequest) returns (EstimateTableSizeResponse);
+  rpc HasNewRows(HasNewRowsRequest) returns (HasNewRowsResponse);
+  rpc Pull(QRepSourceServicePullRequest) returns (stream QRepSourceServicePullResponse);
+}
+
+service QRepDestinationService {
+  rpc IsPartitionSynced(IsPartitionSyncedRequest) returns (IsPartitionSyncedResponse);
+  rpc GetPartitionResult(GetPartitionResultRequest) returns (GetPartitionResultResponse);
+  rpc SetupMetadata(QRepDestinationServiceSetupMetadataRequest) returns (QRepDestinationServiceSetupMetadataResponse);
+  rpc Push(stream QRepDestinationServicePushRequest) returns (QRepDestinationServicePushResponse);
+  rpc Consolidate(ConsolidateRequest) returns (ConsolidateResponse);
+  rpc Cleanup(QRepDestinationServiceCleanupRequest) returns (QRepDestinationServiceCleanupResponse);
+}
+
+service TableLifecycleService {
+  rpc BeginNormalizedTableSetup(BeginNormalizedTableSetupRequest) returns (BeginNormalizedTableSetupResponse);
+  rpc SetupNormalizedTable(SetupNormalizedTableRequest) returns (SetupNormalizedTableResponse);
+  rpc FinishNormalizedTableSetup(FinishNormalizedTableSetupRequest) returns (FinishNormalizedTableSetupResponse);
+  rpc AbortNormalizedTableSetup(AbortNormalizedTableSetupRequest) returns (AbortNormalizedTableSetupResponse);
+  rpc CreateTablesFromExisting(CreateTablesFromExistingRequest) returns (CreateTablesFromExistingResponse);
+  rpc RenameTables(RenameTablesRequest) returns (RenameTablesResponse);
+  rpc RemoveRawTableEntries(RemoveRawTableEntriesRequest) returns (RemoveRawTableEntriesResponse);
+}
+
+service DiagnosticsService {
+  rpc GetRuntimeInfo(GetRuntimeInfoRequest) returns (GetRuntimeInfoResponse);
+  rpc GetStats(GetStatsRequest) returns (GetStatsResponse);
+  rpc GetLogRetention(GetLogRetentionRequest) returns (GetLogRetentionResponse);
+  rpc GetCommitLag(GetCommitLagRequest) returns (GetCommitLagResponse);
+  rpc GetSourceClockOffset(GetSourceClockOffsetRequest) returns (GetSourceClockOffsetResponse);
+}
+
+// Query support is independent of replication support. Raw SQL is used in v1
+// because PeerDB's Rust sqlparser AST is not a stable cross-language ABI.
+service QueryService {
+  rpc OpenConnection(OpenConnectionRequest) returns (OpenConnectionResponse);
+  rpc CloseConnection(CloseConnectionRequest) returns (CloseConnectionResponse);
+  rpc DescribeQuery(DescribeQueryRequest) returns (DescribeQueryResponse);
+  rpc Execute(ExecuteRequest) returns (stream ExecuteResponse);
+  rpc Cancel(CancelRequest) returns (CancelResponse);
+}
+
+// The host implements this service and authorizes every call against the
+// calling session. Plugins never receive a catalog DSN or unrestricted SQL.
+service PluginHostService {
+  rpc GetState(GetStateRequest) returns (GetStateResponse);
+  rpc PutState(PutStateRequest) returns (PutStateResponse);
+  rpc CompareAndSwapState(CompareAndSwapStateRequest) returns (CompareAndSwapStateResponse);
+  rpc DeleteState(DeleteStateRequest) returns (DeleteStateResponse);
+  rpc EmitEvents(EmitEventsRequest) returns (EmitEventsResponse);
+  rpc ResolveSecret(ResolveSecretRequest) returns (ResolveSecretResponse);
+  rpc ResolveObjectAuthorization(ResolveObjectAuthorizationRequest) returns (ResolveObjectAuthorizationResponse);
+}
+
+enum ConnectorRole {
+  CONNECTOR_ROLE_UNSPECIFIED = 0;
+  CONNECTOR_ROLE_SOURCE = 1;
+  CONNECTOR_ROLE_DESTINATION = 2;
+  CONNECTOR_ROLE_QUERY = 3;
+}
+
+enum Stability {
+  STABILITY_UNSPECIFIED = 0;
+  STABILITY_EXPERIMENTAL = 1;
+  STABILITY_BETA = 2;
+  STABILITY_STABLE = 3;
+  STABILITY_DEPRECATED = 4;
+}
+
+enum HealthStatus {
+  HEALTH_STATUS_UNSPECIFIED = 0;
+  HEALTH_STATUS_SERVING = 1;
+  HEALTH_STATUS_DEGRADED = 2;
+  HEALTH_STATUS_NOT_SERVING = 3;
+}
+
+enum ConfigEncoding {
+  CONFIG_ENCODING_UNSPECIFIED = 0;
+  CONFIG_ENCODING_CANONICAL_JSON = 1;
+  CONFIG_ENCODING_PROTOBUF = 2;
+}
+
+enum Compression {
+  COMPRESSION_UNSPECIFIED = 0;
+  COMPRESSION_NONE = 1;
+  COMPRESSION_GZIP = 2;
+  COMPRESSION_ZSTD = 3;
+}
+
+enum RecordFormat {
+  RECORD_FORMAT_UNSPECIFIED = 0;
+  RECORD_FORMAT_QVALUE_PROTO_V1 = 1;
+  RECORD_FORMAT_ARROW_IPC_V1 = 2;
+  RECORD_FORMAT_PG_TEXT_V1 = 3;
+  RECORD_FORMAT_PG_COPY_V1 = 4;
+  RECORD_FORMAT_OBJECT_REF_V1 = 5;
+}
+
+enum SessionPurpose {
+  SESSION_PURPOSE_UNSPECIFIED = 0;
+  SESSION_PURPOSE_VALIDATE = 1;
+  SESSION_PURPOSE_SCHEMA = 2;
+  SESSION_PURPOSE_CDC_PULL = 3;
+  SESSION_PURPOSE_CDC_PUSH = 4;
+  SESSION_PURPOSE_QREP_PULL = 5;
+  SESSION_PURPOSE_QREP_PUSH = 6;
+  SESSION_PURPOSE_SNAPSHOT = 7;
+  SESSION_PURPOSE_QUERY = 8;
+  SESSION_PURPOSE_ADMIN = 9;
+}
+
+enum ErrorCategory {
+  ERROR_CATEGORY_UNSPECIFIED = 0;
+  ERROR_CATEGORY_CONFIG = 1;
+  ERROR_CATEGORY_AUTH = 2;
+  ERROR_CATEGORY_CONNECTIVITY = 3;
+  ERROR_CATEGORY_PERMISSION = 4;
+  ERROR_CATEGORY_NOT_FOUND = 5;
+  ERROR_CATEGORY_CONFLICT = 6;
+  ERROR_CATEGORY_DATA = 7;
+  ERROR_CATEGORY_RESOURCE_EXHAUSTED = 8;
+  ERROR_CATEGORY_CANCELLED = 9;
+  ERROR_CATEGORY_INTERNAL = 10;
+  ERROR_CATEGORY_UNSUPPORTED = 11;
+  ERROR_CATEGORY_RATE_LIMIT = 12;
+  ERROR_CATEGORY_SOURCE_STATE = 13;
+  ERROR_CATEGORY_DESTINATION_STATE = 14;
+  ERROR_CATEGORY_SCHEMA = 15;
+  ERROR_CATEGORY_NORMALIZATION = 16;
+  ERROR_CATEGORY_IDEMPOTENCY = 17;
+}
+
+enum ChangeKind {
+  CHANGE_KIND_UNSPECIFIED = 0;
+  CHANGE_KIND_INSERT = 1;
+  CHANGE_KIND_UPDATE = 2;
+  CHANGE_KIND_DELETE = 3;
+  CHANGE_KIND_SCHEMA = 4;
+  CHANGE_KIND_MESSAGE = 5;
+}
+
+enum StateConsistency {
+  STATE_CONSISTENCY_UNSPECIFIED = 0;
+  STATE_CONSISTENCY_EVENTUAL = 1;
+  STATE_CONSISTENCY_STRONG = 2;
+}
+
+enum MutationState {
+  MUTATION_STATE_UNSPECIFIED = 0;
+  MUTATION_STATE_NOT_FOUND = 1;
+  MUTATION_STATE_IN_PROGRESS = 2;
+  MUTATION_STATE_COMMITTED = 3;
+  MUTATION_STATE_ABORTED = 4;
+}
+
+// LogicalType is the stable v1 registry for the current PeerDB QValue kinds.
+// Array values use list_value and one of the LOGICAL_TYPE_ARRAY_* variants.
+enum LogicalType {
+  LOGICAL_TYPE_UNSPECIFIED = 0;
+  LOGICAL_TYPE_INVALID = 1;
+  LOGICAL_TYPE_FLOAT32 = 2;
+  LOGICAL_TYPE_FLOAT64 = 3;
+  LOGICAL_TYPE_INT8 = 4;
+  LOGICAL_TYPE_INT16 = 5;
+  LOGICAL_TYPE_INT32 = 6;
+  LOGICAL_TYPE_INT64 = 7;
+  LOGICAL_TYPE_INT256 = 8;
+  LOGICAL_TYPE_UINT8 = 9;
+  LOGICAL_TYPE_UINT16 = 10;
+  LOGICAL_TYPE_UINT32 = 11;
+  LOGICAL_TYPE_UINT64 = 12;
+  LOGICAL_TYPE_UINT256 = 13;
+  LOGICAL_TYPE_BOOL = 14;
+  LOGICAL_TYPE_QCHAR = 15;
+  LOGICAL_TYPE_STRING = 16;
+  LOGICAL_TYPE_ENUM = 17;
+  LOGICAL_TYPE_UINT16_ENUM = 18;
+  LOGICAL_TYPE_UINT64_SET = 19;
+  LOGICAL_TYPE_TIMESTAMP = 20;
+  LOGICAL_TYPE_TIMESTAMPTZ = 21;
+  LOGICAL_TYPE_DATE = 22;
+  LOGICAL_TYPE_TIME = 23;
+  LOGICAL_TYPE_TIMETZ = 24;
+  LOGICAL_TYPE_INTERVAL = 25;
+  LOGICAL_TYPE_NUMERIC = 26;
+  LOGICAL_TYPE_BYTES = 27;
+  LOGICAL_TYPE_UUID = 28;
+  LOGICAL_TYPE_JSON = 29;
+  LOGICAL_TYPE_JSONB = 30;
+  LOGICAL_TYPE_HSTORE = 31;
+  LOGICAL_TYPE_GEOGRAPHY = 32;
+  LOGICAL_TYPE_GEOMETRY = 33;
+  LOGICAL_TYPE_POINT = 34;
+  LOGICAL_TYPE_CIDR = 35;
+  LOGICAL_TYPE_INET = 36;
+  LOGICAL_TYPE_MACADDR = 37;
+  LOGICAL_TYPE_ARRAY_FLOAT32 = 38;
+  LOGICAL_TYPE_ARRAY_FLOAT64 = 39;
+  LOGICAL_TYPE_ARRAY_INT16 = 40;
+  LOGICAL_TYPE_ARRAY_INT32 = 41;
+  LOGICAL_TYPE_ARRAY_INT64 = 42;
+  LOGICAL_TYPE_ARRAY_STRING = 43;
+  LOGICAL_TYPE_ARRAY_ENUM = 44;
+  LOGICAL_TYPE_ARRAY_DATE = 45;
+  LOGICAL_TYPE_ARRAY_INTERVAL = 46;
+  LOGICAL_TYPE_ARRAY_TIMESTAMP = 47;
+  LOGICAL_TYPE_ARRAY_TIMESTAMPTZ = 48;
+  LOGICAL_TYPE_ARRAY_BOOL = 49;
+  LOGICAL_TYPE_ARRAY_JSON = 50;
+  LOGICAL_TYPE_ARRAY_JSONB = 51;
+  LOGICAL_TYPE_ARRAY_UUID = 52;
+  LOGICAL_TYPE_ARRAY_NUMERIC = 53;
+}
+
+enum ConfigScope {
+  CONFIG_SCOPE_UNSPECIFIED = 0;
+  CONFIG_SCOPE_CONNECTION = 1;
+  CONFIG_SCOPE_CDC_SOURCE = 2;
+  CONFIG_SCOPE_CDC_DESTINATION = 3;
+  CONFIG_SCOPE_QREP_SOURCE = 4;
+  CONFIG_SCOPE_QREP_DESTINATION = 5;
+  CONFIG_SCOPE_QUERY = 6;
+}
+
+enum QueryTransactionStatus {
+  QUERY_TRANSACTION_STATUS_UNSPECIFIED = 0;
+  QUERY_TRANSACTION_STATUS_IDLE = 1;
+  QUERY_TRANSACTION_STATUS_IN_TRANSACTION = 2;
+  QUERY_TRANSACTION_STATUS_FAILED = 3;
+}
+
+message ProtocolVersion {
+  uint32 major = 1;
+  uint32 minor = 2;
+}
+
+message ProtocolRange {
+  uint32 major = 1;
+  uint32 minimum_minor = 2;
+  uint32 maximum_minor = 3;
+}
+
+message VersionRange {
+  string minimum = 1;
+  string maximum_exclusive = 2;
+}
+
+message Capability {
+  string name = 1;
+  uint32 version = 2;
+}
+
+message ArtifactIdentity {
+  string digest = 1;
+  string platform = 2;
+}
+
+message ConfigSchemaDescriptor {
+  ConfigScope scope = 1;
+  uint32 schema_version = 2;
+  google.protobuf.Struct schema = 3;
+  google.protobuf.Struct ui_hints = 4;
+  repeated string secret_json_pointers = 5;
+}
+
+message ConnectorDescriptor {
+  string id = 1;
+  string display_name = 2;
+  string description = 3;
+  repeated ConnectorRole roles = 4;
+  repeated Capability capabilities = 5;
+  repeated RecordFormat record_formats = 6;
+  Stability stability = 7;
+  string deprecation_message = 8;
+  google.protobuf.Struct config_schema = 9;
+  google.protobuf.Struct ui_hints = 10;
+  repeated string secret_json_pointers = 11;
+  uint32 config_schema_version = 12;
+  repeated ConfigSchemaDescriptor operation_config_schemas = 13;
+}
+
+message PluginDescriptor {
+  string id = 1;
+  string name = 2;
+  string version = 3;
+  string description = 4;
+  string vendor = 5;
+  string homepage = 6;
+  string license = 7;
+  ProtocolRange protocol = 8;
+  VersionRange core_versions = 9;
+  ArtifactIdentity artifact = 10;
+  repeated ConnectorDescriptor connectors = 11;
+}
+
+message RequestContext {
+  string request_id = 1;
+  string flow_name = 2;
+  string operation = 3;
+  string traceparent = 4;
+  string tracestate = 5;
+  map<string, string> baggage = 6;
+  google.protobuf.Timestamp deadline = 7;
+  // Mutating unary calls must reuse this key after an unknown outcome.
+  string idempotency_key = 8;
+  uint32 attempt = 9;
+}
+
+message FieldViolation {
+  string field = 1;
+  string description = 2;
+}
+
+message PluginError {
+  string code = 1;
+  ErrorCategory category = 2;
+  bool retryable = 3;
+  string safe_message = 4;
+  string sqlstate = 5;
+  string vendor_code = 6;
+  map<string, string> safe_details = 7;
+  repeated FieldViolation field_violations = 8;
+}
+
+message HandshakeRequest {
+  ProtocolRange protocol = 1;
+  string host_version = 2;
+  string host_instance_id = 3;
+  repeated Compression compressions = 4;
+  repeated RecordFormat record_formats = 5;
+  uint64 maximum_frame_bytes = 6;
+  bytes nonce = 7;
+  ProtocolRange host_callback_protocol = 8;
+  repeated string features = 9;
+}
+
+message HandshakeResponse {
+  ProtocolVersion protocol = 1;
+  PluginDescriptor plugin = 2;
+  Compression compression = 3;
+  repeated RecordFormat record_formats = 4;
+  uint64 maximum_frame_bytes = 5;
+  bytes nonce_proof = 6;
+  ProtocolVersion host_callback_protocol = 7;
+  repeated string features = 8;
+}
+
+message DescribeRequest {}
+
+message DescribeResponse {
+  PluginDescriptor plugin = 1;
+}
+
+message HealthRequest {
+  string session_id = 1;
+}
+
+message HealthResponse {
+  HealthStatus status = 1;
+  string message = 2;
+  map<string, string> details = 3;
+}
+
+message DrainRequest {
+  RequestContext context = 1;
+  google.protobuf.Timestamp deadline = 2;
+  string reason = 3;
+}
+
+message DrainResponse {
+  uint64 active_sessions = 1;
+}
+
+message OpenSessionRequest {
+  RequestContext context = 1;
+  string connector_id = 2;
+  string peer_name = 3;
+  SessionPurpose purpose = 4;
+  ConfigEncoding config_encoding = 5;
+  bytes config = 6;
+  uint32 config_schema_version = 7;
+  map<string, string> environment = 8;
+  repeated Capability required_capabilities = 9;
+  repeated RecordFormat preferred_record_formats = 10;
+}
+
+message OpenSessionResponse {
+  string session_id = 1;
+  repeated Capability capabilities = 2;
+  RecordFormat record_format = 3;
+  google.protobuf.Duration lease_duration = 4;
+}
+
+message RenewSessionRequest {
+  RequestContext context = 1;
+  string session_id = 2;
+}
+
+message RenewSessionResponse {
+  google.protobuf.Duration lease_duration = 1;
+}
+
+message CloseSessionRequest {
+  RequestContext context = 1;
+  string session_id = 2;
+}
+
+message CloseSessionResponse {}
+
+message ShutdownRequest {
+  RequestContext context = 1;
+  string reason = 2;
+}
+
+message ShutdownResponse {}
+
+message ValidateRequest {
+  RequestContext context = 1;
+  string session_id = 2;
+  ConnectorRole role = 3;
+  FlowDefinition flow = 4;
+  map<string, TableSchema> source_schemas = 5;
+}
+
+message ValidationIssue {
+  string code = 1;
+  string message = 2;
+  string config_json_pointer = 3;
+  bool warning = 4;
+}
+
+message ValidateResponse {
+  bool valid = 1;
+  repeated ValidationIssue issues = 2;
+}
+
+// MigrateConfig is pure: it must not connect to an external system or mutate
+// host/plugin state. The host applies one explicit schema step at a time.
+message MigrateConfigRequest {
+  RequestContext context = 1;
+  string connector_id = 2;
+  ConfigEncoding encoding = 3;
+  bytes config = 4;
+  uint32 from_schema_version = 5;
+  uint32 to_schema_version = 6;
+}
+
+message MigrateConfigResponse {
+  ConfigEncoding encoding = 1;
+  bytes config = 2;
+  uint32 schema_version = 3;
+  repeated ValidationIssue warnings = 4;
+}
+
+message FlowDefinition {
+  string flow_name = 1;
+  repeated TableMapping table_mappings = 2;
+  google.protobuf.Struct settings = 3;
+  repeated string flags = 4;
+  google.protobuf.Struct source_options = 5;
+  google.protobuf.Struct destination_options = 6;
+  google.protobuf.Struct transport_options = 7;
+}
+
+message TableMapping {
+  string source = 1;
+  string destination = 2;
+  repeated string exclude_columns = 3;
+  string partition_key = 4;
+}
+
+message FieldSchema {
+  string name = 1;
+  LogicalType logical_type = 2;
+  bool nullable = 3;
+  int32 precision = 4;
+  int32 scale = 5;
+  map<string, string> annotations = 6;
+  uint32 database_type_id = 7;
+  int32 type_modifier = 8;
+  uint32 source_table_id = 9;
+  int32 source_column_id = 10;
+  int32 format_code = 11;
+}
+
+message TableSchema {
+  string identifier = 1;
+  repeated FieldSchema fields = 2;
+  repeated string primary_key_columns = 3;
+  bool replica_identity_full = 4;
+  map<string, string> annotations = 5;
+}
+
+message GetSchemasRequest {
+  RequestContext context = 1;
+  string session_id = 2;
+}
+
+message GetSchemasResponse {
+  repeated string schemas = 1;
+}
+
+message GetTablesRequest {
+  RequestContext context = 1;
+  string session_id = 2;
+  string schema = 3;
+  bool cdc_only = 4;
+}
+
+message TableInfo {
+  string schema = 1;
+  string name = 2;
+  bool can_mirror = 3;
+  map<string, string> annotations = 4;
+}
+
+message GetTablesResponse {
+  repeated TableInfo tables = 1;
+}
+
+message GetColumnsRequest {
+  RequestContext context = 1;
+  string session_id = 2;
+  string table = 3;
+  uint32 internal_version = 4;
+}
+
+message GetColumnsResponse {
+  repeated FieldSchema columns = 1;
+}
+
+message GetTableSchemasRequest {
+  RequestContext context = 1;
+  string session_id = 2;
+  repeated TableMapping tables = 3;
+  uint32 internal_version = 4;
+  string type_system = 5;
+}
+
+message GetTableSchemasResponse {
+  map<string, TableSchema> schemas = 1;
+}
+
+message Checkpoint {
+  int64 id = 1;
+  string text = 2;
+  bytes opaque = 3;
+}
+
+// MutationKey is the durable replay identity. A host must reuse it after an
+// unknown outcome; a destination must atomically commit its data and marker.
+message MutationKey {
+  string flow_name = 1;
+  oneof unit {
+    int64 sync_batch_id = 2;
+    string partition_id = 3;
+    string operation_id = 4;
+  }
+}
+
+message EnsurePullabilityRequest {
+  RequestContext context = 1;
+  string session_id = 2;
+  FlowDefinition flow = 3;
+}
+
+message EnsurePullabilityResponse {
+  map<string, uint32> table_relation_ids = 1;
+  map<string, string> details = 2;
+}
+
+message BeginSnapshotRequest {
+  RequestContext context = 1;
+  string session_id = 2;
+  string flow_name = 3;
+}
+
+message BeginSnapshotResponse {
+  string snapshot_handle = 1;
+  string snapshot_name = 2;
+  google.protobuf.Duration lease_duration = 3;
+  string staging_path = 4;
+}
+
+message KeepSnapshotAliveRequest {
+  RequestContext context = 1;
+  string session_id = 2;
+  string snapshot_handle = 3;
+}
+
+message KeepSnapshotAliveResponse {
+  google.protobuf.Duration lease_duration = 1;
+}
+
+message FinishSnapshotRequest {
+  RequestContext context = 1;
+  string session_id = 2;
+  string snapshot_handle = 3;
+  bool commit = 4;
+}
+
+message FinishSnapshotResponse {}
+
+message SetupReplicationRequest {
+  RequestContext context = 1;
+  string session_id = 2;
+  FlowDefinition flow = 3;
+  string requested_slot_name = 4;
+  string requested_publication_name = 5;
+  bool initial_snapshot = 6;
+}
+
+message SetupReplicationResponse {
+  string replication_handle = 1;
+  string slot_name = 2;
+  string snapshot_name = 3;
+  bool supports_tid_scans = 4;
+  google.protobuf.Duration lease_duration = 5;
+}
+
+message KeepReplicationAliveRequest {
+  RequestContext context = 1;
+  string session_id = 2;
+  string replication_handle = 3;
+}
+
+message KeepReplicationAliveResponse {
+  google.protobuf.Duration lease_duration = 1;
+}
+
+// CloseReplication releases the process-local connection and lease without
+// dropping durable slots, publications, or other flow resources.
+message CloseReplicationRequest {
+  RequestContext context = 1;
+  string session_id = 2;
+  string replication_handle = 3;
+}
+
+message CloseReplicationResponse {}
+
+message CleanupReplicationRequest {
+  RequestContext context = 1;
+  string session_id = 2;
+  string flow_name = 3;
+  string replication_handle = 4;
+  bool drop_durable_resources = 5;
+}
+
+message CleanupReplicationResponse {}
+
+// TypedValue carries one stable logical type and exactly one value. Nulls use
+// null_value while retaining their intended logical_type. INT256/UINT256,
+// interval, JSON/JSONB, HStore, network, and spatial values use canonical UTF-8
+// string_value. UUID uses 16 network-order bytes. TIMESTAMP/TIMESTAMPTZ use
+// timestamp_value; DATE is days from 1970-01-01; TIME/TIMETZ are microseconds
+// from midnight (TIMETZ follows the current PeerDB normalized-duration model).
+// Float32 is carried in double_value and must round-trip through IEEE float32.
+message TypedValue {
+  LogicalType logical_type = 1;
+  oneof value {
+    google.protobuf.NullValue null_value = 2;
+    bool bool_value = 3;
+    sint64 int64_value = 4;
+    uint64 uint64_value = 5;
+    double double_value = 6;
+    string string_value = 7;
+    bytes bytes_value = 8;
+    TypedValueList list_value = 9;
+    google.protobuf.Timestamp timestamp_value = 10;
+    DecimalValue decimal_value = 11;
+    sint32 date_days = 12;
+    sint64 time_microseconds = 13;
+  }
+}
+
+message DecimalValue {
+  string value = 1;
+  int32 precision = 2;
+  int32 scale = 3;
+}
+
+message TypedValueList {
+  repeated TypedValue values = 1;
+}
+
+message Row {
+  repeated TypedValue values = 1;
+}
+
+message NamedRow {
+  map<string, TypedValue> values = 1;
+}
+
+message ChangeRecord {
+  ChangeKind kind = 1;
+  Checkpoint checkpoint = 2;
+  google.protobuf.Timestamp commit_time = 3;
+  uint64 transaction_id = 4;
+  string source_table = 5;
+  string destination_table = 6;
+  NamedRow new_row = 7;
+  NamedRow old_row = 8;
+  repeated string unchanged_columns = 9;
+  TableSchemaDelta schema_delta = 10;
+  LogicalMessage logical_message = 11;
+}
+
+message TableSchemaDelta {
+  string source_table = 1;
+  string destination_table = 2;
+  TableSchema schema = 3;
+}
+
+message LogicalMessage {
+  string prefix = 1;
+  bytes content = 2;
+}
+
+message ChangeBatch {
+  uint64 sequence = 1;
+  oneof payload {
+    CanonicalChangeRecords canonical_records = 2;
+    bytes encoded_records = 3;
+  }
+  Checkpoint last_checkpoint = 4;
+  bool needs_normalize = 5;
+  RecordFormat record_format = 6;
+  Compression compression = 7;
+  uint64 uncompressed_size_bytes = 8;
+  bytes sha256 = 9;
+}
+
+message CanonicalChangeRecords {
+  // Schema changes are ChangeRecords so their ordering relative to DML is
+  // unambiguous; there is no second batch-level schema-delta channel.
+  repeated ChangeRecord records = 1;
+}
+
+message CdcPullOpen {
+  RequestContext context = 1;
+  string session_id = 2;
+  string replication_handle = 3;
+  FlowDefinition flow = 4;
+  map<string, TableSchema> table_schemas = 5;
+  Checkpoint last_checkpoint = 6;
+  uint32 maximum_batch_records = 7;
+  google.protobuf.Duration idle_timeout = 8;
+  uint64 maximum_in_flight_bytes = 9;
+  RecordFormat record_format = 10;
+  Compression compression = 11;
+}
+
+message CdcCheckpointAck {
+  uint64 sequence = 1;
+  Checkpoint consumed = 2;
+  bytes batch_sha256 = 3;
+}
+
+message CancelStream {
+  string reason = 1;
+}
+
+message CdcSourceServicePullRequest {
+  oneof frame {
+    CdcPullOpen open = 1;
+    CdcCheckpointAck checkpoint_ack = 2;
+    CancelStream cancel = 3;
+  }
+}
+
+message StreamProgress {
+  uint64 records = 1;
+  uint64 bytes = 2;
+  // Observational only. Progress never authorizes checkpoint advancement.
+  Checkpoint observed_checkpoint = 3;
+  map<string, string> details = 4;
+}
+
+message StreamCompleted {
+  Checkpoint checkpoint = 1;
+  uint64 records = 2;
+  uint64 bytes = 3;
+}
+
+message CdcSourceServicePullResponse {
+  oneof frame {
+    ChangeBatch batch = 1;
+    StreamProgress progress = 2;
+    StreamCompleted completed = 3;
+    PluginError error = 4;
+  }
+}
+
+message NeedsMetadataSetupRequest {
+  RequestContext context = 1;
+  string session_id = 2;
+}
+
+message NeedsMetadataSetupResponse {
+  bool required = 1;
+}
+
+message SetupMetadataRequest {
+  RequestContext context = 1;
+  string session_id = 2;
+  string flow_name = 3;
+}
+
+message SetupMetadataResponse {}
+
+message CreateRawTableRequest {
+  RequestContext context = 1;
+  string session_id = 2;
+  string flow_name = 3;
+  string table = 4;
+  TableSchema source_schema = 5;
+  map<string, string> options = 6;
+}
+
+message CreateRawTableResponse {
+  string table = 1;
+}
+
+message ReplaySchemaDeltasRequest {
+  RequestContext context = 1;
+  string session_id = 2;
+  string flow_name = 3;
+  repeated TableMapping table_mappings = 4;
+  repeated TableSchemaDelta deltas = 5;
+  repeated string flags = 6;
+}
+
+message ReplaySchemaDeltasResponse {}
+
+message CdcDestinationServiceCleanupRequest {
+  RequestContext context = 1;
+  string session_id = 2;
+  string flow_name = 3;
+}
+
+message CdcDestinationServiceCleanupResponse {}
+
+message GetBatchStatusRequest {
+  RequestContext context = 1;
+  string session_id = 2;
+  MutationKey mutation_key = 3;
+}
+
+message GetBatchStatusResponse {
+  MutationState state = 1;
+  CdcPushResult committed_result = 2;
+}
+
+message GetLastSyncBatchRequest {
+  RequestContext context = 1;
+  string session_id = 2;
+  string flow_name = 3;
+}
+
+message GetLastSyncBatchResponse {
+  bool found = 1;
+  int64 sync_batch_id = 2;
+  Checkpoint checkpoint = 3;
+}
+
+message CdcPushOpen {
+  RequestContext context = 1;
+  string session_id = 2;
+  FlowDefinition flow = 3;
+  map<string, TableSchema> table_schemas = 4;
+  int64 sync_batch_id = 5;
+  uint32 internal_version = 6;
+  string staging_path = 7;
+  string transform_script = 8;
+  MutationKey mutation_key = 9;
+  RecordFormat record_format = 10;
+  Compression compression = 11;
+  uint64 maximum_frame_bytes = 12;
+}
+
+message CdcPushFinish {}
+
+message CdcDestinationServicePushRequest {
+  oneof frame {
+    CdcPushOpen open = 1;
+    ChangeBatch batch = 2;
+    CdcPushFinish finish = 3;
+    CancelStream cancel = 4;
+  }
+}
+
+message RecordTypeCounts {
+  int64 inserts = 1;
+  int64 updates = 2;
+  int64 deletes = 3;
+}
+
+message CdcPushResult {
+  map<string, RecordTypeCounts> table_counts = 1;
+  repeated TableSchemaDelta schema_deltas = 2;
+  Checkpoint last_checkpoint = 3;
+  int64 records_synced = 4;
+  int64 current_sync_batch_id = 5;
+  repeated string warnings = 6;
+  MutationKey mutation_key = 7;
+  MutationState state = 8;
+  bool replayed_committed_result = 9;
+  bytes result_sha256 = 10;
+}
+
+message CdcPushAck {
+  uint64 sequence = 1;
+  Checkpoint consumed = 2;
+  uint64 records = 3;
+  // True means both destination data and its idempotency marker are durable.
+  bool durable = 4;
+  bytes batch_sha256 = 5;
+}
+
+message CdcDestinationServicePushResponse {
+  oneof frame {
+    CdcPushAck ack = 1;
+    StreamProgress progress = 2;
+    CdcPushResult completed = 3;
+    PluginError error = 4;
+  }
+}
+
+message NormalizeRequest {
+  RequestContext context = 1;
+  string session_id = 2;
+  FlowDefinition flow = 3;
+  map<string, TableSchema> table_schemas = 4;
+  int64 sync_batch_id = 5;
+  uint32 internal_version = 6;
+  string soft_delete_column = 7;
+  string synced_at_column = 8;
+}
+
+message NormalizeResponse {
+  int64 start_batch_id = 1;
+  int64 end_batch_id = 2;
+}
+
+message PartitionRange {
+  oneof value {
+    IntRange int_range = 1;
+    UintRange uint_range = 2;
+    TimestampRange timestamp_range = 3;
+    string opaque_range = 4;
+  }
+}
+
+message IntRange {
+  sint64 start = 1;
+  sint64 end = 2;
+}
+
+message UintRange {
+  uint64 start = 1;
+  uint64 end = 2;
+}
+
+message TimestampRange {
+  google.protobuf.Timestamp start = 1;
+  google.protobuf.Timestamp end = 2;
+}
+
+message QRepPartition {
+  string id = 1;
+  PartitionRange range = 2;
+  bytes opaque_state = 3;
+}
+
+message QRepDefinition {
+  string flow_name = 1;
+  string source_table = 2;
+  string destination_table = 3;
+  string query = 4;
+  string watermark_column = 5;
+  string watermark_table = 6;
+  google.protobuf.Struct settings = 7;
+  bool initial_copy_only = 8;
+  google.protobuf.Struct source_options = 9;
+  google.protobuf.Struct destination_options = 10;
+}
+
+message GetPartitionsRequest {
+  RequestContext context = 1;
+  string session_id = 2;
+  QRepDefinition flow = 3;
+  QRepPartition last_partition = 4;
+}
+
+message GetPartitionsResponse {
+  repeated QRepPartition partitions = 1;
+}
+
+message GetDefaultPartitionKeysRequest {
+  RequestContext context = 1;
+  string session_id = 2;
+  repeated string tables = 3;
+}
+
+message GetDefaultPartitionKeysResponse {
+  map<string, string> keys = 1;
+}
+
+message EstimateTableSizeRequest {
+  RequestContext context = 1;
+  string session_id = 2;
+  string table = 3;
+}
+
+message EstimateTableSizeResponse {
+  int64 bytes = 1;
+  bool exact = 2;
+}
+
+message HasNewRowsRequest {
+  RequestContext context = 1;
+  string session_id = 2;
+  QRepDefinition flow = 3;
+  QRepPartition last_partition = 4;
+}
+
+message HasNewRowsResponse {
+  bool has_new_rows = 1;
+}
+
+message QRepSourceServicePullRequest {
+  RequestContext context = 1;
+  string session_id = 2;
+  QRepDefinition flow = 3;
+  QRepPartition partition = 4;
+  RecordFormat record_format = 5;
+}
+
+message RowSchema {
+  repeated FieldSchema fields = 1;
+}
+
+message RowBatch {
+  uint64 sequence = 1;
+  RowSchema schema = 2;
+  oneof payload {
+    CanonicalRows canonical_rows = 3;
+    bytes encoded_batch = 4;
+  }
+  RecordFormat record_format = 5;
+  Compression compression = 6;
+  uint64 uncompressed_size_bytes = 7;
+  bytes sha256 = 8;
+}
+
+message CanonicalRows {
+  repeated Row rows = 1;
+}
+
+message ObjectReference {
+  string uri = 1;
+  string method = 2;
+  google.protobuf.Timestamp expires_at = 3;
+  int64 size_bytes = 4;
+  string content_type = 5;
+  string digest = 6;
+  // Opaque host-issued handle. Sensitive headers never transit source to
+  // destination directly; the destination resolves this under host policy.
+  string authorization_handle = 7;
+  string authorization_policy_id = 8;
+}
+
+message ObjectBatch {
+  uint64 sequence = 1;
+  repeated ObjectReference objects = 2;
+}
+
+message QRepPullCompleted {
+  int64 records = 1;
+  int64 bytes = 2;
+  bytes sha256 = 3;
+}
+
+message QRepSourceServicePullResponse {
+  oneof frame {
+    RowBatch rows = 1;
+    ObjectBatch objects = 2;
+    StreamProgress progress = 3;
+    QRepPullCompleted completed = 4;
+    PluginError error = 5;
+  }
+}
+
+message IsPartitionSyncedRequest {
+  RequestContext context = 1;
+  string session_id = 2;
+  QRepDefinition flow = 3;
+  QRepPartition partition = 4;
+}
+
+message IsPartitionSyncedResponse {
+  bool synced = 1;
+  QRepDestinationServicePushResponse committed_result = 2;
+}
+
+message GetPartitionResultRequest {
+  RequestContext context = 1;
+  string session_id = 2;
+  MutationKey mutation_key = 3;
+}
+
+message GetPartitionResultResponse {
+  MutationState state = 1;
+  QRepDestinationServicePushResponse committed_result = 2;
+}
+
+message QRepDestinationServiceSetupMetadataRequest {
+  RequestContext context = 1;
+  string session_id = 2;
+  QRepDefinition flow = 3;
+}
+
+message QRepDestinationServiceSetupMetadataResponse {}
+
+message QRepPushOpen {
+  RequestContext context = 1;
+  string session_id = 2;
+  QRepDefinition flow = 3;
+  QRepPartition partition = 4;
+  RecordFormat record_format = 5;
+  MutationKey mutation_key = 6;
+  Compression compression = 7;
+}
+
+message QRepPushFinish {}
+
+message QRepDestinationServicePushRequest {
+  oneof frame {
+    QRepPushOpen open = 1;
+    RowBatch rows = 2;
+    ObjectBatch objects = 3;
+    QRepPushFinish finish = 4;
+  }
+}
+
+message QRepDestinationServicePushResponse {
+  int64 records_synced = 1;
+  repeated string warnings = 2;
+  MutationKey mutation_key = 3;
+  MutationState state = 4;
+  bool replayed_committed_result = 5;
+  bytes content_sha256 = 6;
+}
+
+message ConsolidateRequest {
+  RequestContext context = 1;
+  string session_id = 2;
+  QRepDefinition flow = 3;
+}
+
+message ConsolidateResponse {}
+
+message QRepDestinationServiceCleanupRequest {
+  RequestContext context = 1;
+  string session_id = 2;
+  QRepDefinition flow = 3;
+}
+
+message QRepDestinationServiceCleanupResponse {}
+
+message BeginNormalizedTableSetupRequest {
+  RequestContext context = 1;
+  string session_id = 2;
+  string flow_name = 3;
+}
+
+message BeginNormalizedTableSetupResponse {
+  string transaction_handle = 1;
+}
+
+message SetupNormalizedTableRequest {
+  RequestContext context = 1;
+  string session_id = 2;
+  string transaction_handle = 3;
+  string table = 4;
+  TableSchema source_schema = 5;
+  map<string, string> options = 6;
+}
+
+message SetupNormalizedTableResponse {
+  bool created = 1;
+}
+
+message FinishNormalizedTableSetupRequest {
+  RequestContext context = 1;
+  string session_id = 2;
+  string transaction_handle = 3;
+}
+
+message FinishNormalizedTableSetupResponse {}
+
+message AbortNormalizedTableSetupRequest {
+  RequestContext context = 1;
+  string session_id = 2;
+  string transaction_handle = 3;
+}
+
+message AbortNormalizedTableSetupResponse {}
+
+message TableDefinition {
+  string source = 1;
+  string destination = 2;
+  TableSchema schema = 3;
+}
+
+message CreateTablesFromExistingRequest {
+  RequestContext context = 1;
+  string session_id = 2;
+  repeated TableDefinition tables = 3;
+}
+
+message CreateTablesFromExistingResponse {
+  repeated string created_tables = 1;
+}
+
+message RenameTable {
+  string old_name = 1;
+  string new_name = 2;
+}
+
+message RenameTablesRequest {
+  RequestContext context = 1;
+  string session_id = 2;
+  repeated RenameTable tables = 3;
+  map<string, TableSchema> schemas = 4;
+  string soft_delete_column = 5;
+  string synced_at_column = 6;
+}
+
+message RenameTablesResponse {
+  repeated string renamed_tables = 1;
+}
+
+message RemoveRawTableEntriesRequest {
+  RequestContext context = 1;
+  string session_id = 2;
+  string flow_name = 3;
+  repeated string tables = 4;
+  int64 sync_batch_id = 5;
+  int64 normalize_batch_id = 6;
+}
+
+message RemoveRawTableEntriesResponse {}
+
+message GetRuntimeInfoRequest {
+  RequestContext context = 1;
+  string session_id = 2;
+}
+
+message GetRuntimeInfoResponse {
+  string database_version = 1;
+  string database_variant = 2;
+  string replication_mechanism = 3;
+  repeated string flags = 4;
+  map<string, string> details = 5;
+}
+
+message GetStatsRequest {
+  RequestContext context = 1;
+  string session_id = 2;
+  bool peerdb_managed_only = 3;
+}
+
+message GetStatsResponse {
+  google.protobuf.Struct stats = 1;
+}
+
+message GetLogRetentionRequest {
+  RequestContext context = 1;
+  string session_id = 2;
+}
+
+message GetLogRetentionResponse {
+  double hours = 1;
+}
+
+message GetCommitLagRequest {
+  RequestContext context = 1;
+  string session_id = 2;
+  string flow_name = 3;
+}
+
+message GetCommitLagResponse {
+  int64 microseconds = 1;
+}
+
+message GetSourceClockOffsetRequest {
+  RequestContext context = 1;
+  string session_id = 2;
+}
+
+message GetSourceClockOffsetResponse {
+  google.protobuf.Duration offset = 1;
+}
+
+message OpenConnectionRequest {
+  RequestContext context = 1;
+  string session_id = 2;
+  map<string, string> startup_parameters = 3;
+  bool read_only = 4;
+}
+
+message OpenConnectionResponse {
+  string query_connection_id = 1;
+  string dialect = 2;
+  map<string, string> server_parameters = 3;
+  int32 backend_process_id = 4;
+  int32 backend_secret_key = 5;
+  QueryTransactionStatus transaction_status = 6;
+  bool read_only = 7;
+}
+
+message CloseConnectionRequest {
+  RequestContext context = 1;
+  string session_id = 2;
+  string query_connection_id = 3;
+}
+
+message CloseConnectionResponse {}
+
+message DescribeQueryRequest {
+  RequestContext context = 1;
+  string session_id = 2;
+  string query_connection_id = 3;
+  string sql = 4;
+  repeated LogicalType parameter_types = 5;
+}
+
+message DescribeQueryResponse {
+  repeated LogicalType parameter_types = 1;
+  RowSchema row_schema = 2;
+  bool read_only = 3;
+}
+
+message ExecuteRequest {
+  RequestContext context = 1;
+  string session_id = 2;
+  string query_connection_id = 3;
+  string operation_id = 4;
+  string sql = 5;
+  repeated TypedValue parameters = 6;
+  uint32 fetch_size = 7;
+  uint64 maximum_rows = 8;
+}
+
+message QueryResultStart {
+  uint32 result_index = 1;
+  RowSchema schema = 2;
+}
+
+message QueryResultEnd {
+  uint32 result_index = 1;
+  uint64 rows = 2;
+}
+
+message QueryCommandComplete {
+  uint32 result_index = 1;
+  string tag = 2;
+  int64 affected_rows = 3;
+  uint32 object_id = 4;
+}
+
+message QueryReady {
+  QueryTransactionStatus transaction_status = 1;
+}
+
+message ExecuteResponse {
+  oneof frame {
+    QueryResultStart result_start = 1;
+    RowBatch rows = 2;
+    QueryResultEnd result_end = 3;
+    QueryCommandComplete command_complete = 4;
+    QueryReady ready = 5;
+    PluginError error = 6;
+  }
+}
+
+message CancelRequest {
+  RequestContext context = 1;
+  string session_id = 2;
+  string query_connection_id = 3;
+  string operation_id = 4;
+}
+
+message CancelResponse {
+  bool accepted = 1;
+}
+
+message GetStateRequest {
+  RequestContext context = 1;
+  string session_id = 2;
+  string namespace = 3;
+  string key = 4;
+  StateConsistency consistency = 5;
+}
+
+message GetStateResponse {
+  bytes value = 1;
+  string version = 2;
+  bool found = 3;
+}
+
+message PutStateRequest {
+  RequestContext context = 1;
+  string session_id = 2;
+  string namespace = 3;
+  string key = 4;
+  bytes value = 5;
+  google.protobuf.Duration ttl = 6;
+}
+
+message PutStateResponse {
+  string version = 1;
+}
+
+message CompareAndSwapStateRequest {
+  RequestContext context = 1;
+  string session_id = 2;
+  string namespace = 3;
+  string key = 4;
+  string expected_version = 5;
+  bytes value = 6;
+  google.protobuf.Duration ttl = 7;
+}
+
+message CompareAndSwapStateResponse {
+  bool swapped = 1;
+  string version = 2;
+}
+
+message DeleteStateRequest {
+  RequestContext context = 1;
+  string session_id = 2;
+  string namespace = 3;
+  string key = 4;
+}
+
+message DeleteStateResponse {}
+
+message HostEvent {
+  string kind = 1;
+  string name = 2;
+  double value = 3;
+  string message = 4;
+  map<string, string> attributes = 5;
+  google.protobuf.Timestamp timestamp = 6;
+}
+
+message EmitEventsRequest {
+  RequestContext context = 1;
+  string session_id = 2;
+  repeated HostEvent events = 3;
+}
+
+message EmitEventsResponse {}
+
+message ResolveSecretRequest {
+  RequestContext context = 1;
+  string session_id = 2;
+  string reference = 3;
+}
+
+message ResolveSecretResponse {
+  bytes value = 1;
+  google.protobuf.Timestamp expires_at = 2;
+}
+
+message ResolveObjectAuthorizationRequest {
+  RequestContext context = 1;
+  string session_id = 2;
+  string authorization_handle = 3;
+  string authorization_policy_id = 4;
+  string uri = 5;
+  string method = 6;
+  string object_digest = 7;
+}
+
+message ResolveObjectAuthorizationResponse {
+  // The host may return a replacement signed URI or scoped headers. Both are
+  // bound to this destination session and audited against the policy ID.
+  string signed_uri = 1;
+  map<string, string> headers = 2;
+  google.protobuf.Timestamp expires_at = 3;
+}

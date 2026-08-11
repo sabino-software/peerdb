@@ -324,6 +324,33 @@ enum DatabaseVariant {
   COCKROACHDB_SERVERLESS = 12;
 }
 
+// Generic connector identity for the external plugin path. DBType and Peer's
+// config oneof remain readable during the compatibility window.
+message ConnectorRef {
+  string plugin_id = 1;
+  string connector_id = 2;
+  string version = 3;
+  string artifact_digest = 4;
+}
+
+enum ConnectorConfigEncoding {
+  CONNECTOR_CONFIG_ENCODING_UNSPECIFIED = 0;
+  CONNECTOR_CONFIG_ENCODING_CANONICAL_JSON = 1;
+  CONNECTOR_CONFIG_ENCODING_PROTOBUF = 2;
+}
+
+message ConnectorConfiguration {
+  uint32 schema_version = 1;
+  ConnectorConfigEncoding encoding = 2;
+  bytes payload = 3;
+}
+
+message PeerV2 {
+  string name = 1;
+  ConnectorRef connector = 2;
+  ConnectorConfiguration configuration = 3;
+}
+
 message Peer {
   string name = 1;
   DBType type = 2;

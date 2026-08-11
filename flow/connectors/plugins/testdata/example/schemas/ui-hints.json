@@ -1,0 +1,9 @@
+{
+  "schemaVersion": 1,
+  "placeholder": false,
+  "notice": "Example fixture only",
+  "order": ["endpoint", "apiKey"],
+  "fields": {
+    "apiKey": { "widget": "password" }
+  }
+}
