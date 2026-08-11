@@ -1,0 +1,64 @@
+name: Connector plugin protocol
+
+on:
+  pull_request:
+    paths:
+      - protos/peerdb/plugin/**
+      - flow/connectors/plugins/**
+      - flow/connectors/pluginlock/**
+      - flow/connectors/pluginmanager/**
+      - flow/connectors/pluginruntime/**
+      - flow/go.mod
+      - flow/go.sum
+      - protos/buf.yaml
+      - buf.gen.yaml
+      - .github/workflows/plugin-protocol.yml
+  push:
+    branches: [main]
+    paths:
+      - protos/peerdb/plugin/**
+      - flow/connectors/plugins/**
+      - flow/connectors/pluginlock/**
+      - flow/connectors/pluginmanager/**
+      - flow/connectors/pluginruntime/**
+      - flow/go.mod
+      - flow/go.sum
+      - protos/buf.yaml
+      - buf.gen.yaml
+      - .github/workflows/plugin-protocol.yml
+
+permissions:
+  contents: read
+
+jobs:
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+
+      - uses: bufbuild/buf-action@8c6a16e16f12ba20b6470afa9c2ba9b5ba8c97c3 # v1
+        with:
+          setup_only: true
+          github_token: ${{ github.token }}
+
+      # The legacy flat protobuf packages predate Buf's default layout rules.
+      # Scope strict linting to the independently versioned plugin ABI.
+      - name: Lint plugin protocol
+        run: buf lint protos --path protos/peerdb/plugin/v1
+
+      - name: Generate all language bindings
+        run: buf generate protos --path protos/peerdb/plugin/v1
+
+      - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6
+        with:
+          go-version-file: flow/go.mod
+          cache-dependency-path: flow/go.sum
+
+      - name: Test plugin foundation
+        working-directory: flow
+        run: >-
+          go test
+          ./connectors/plugins
+          ./connectors/pluginlock
+          ./connectors/pluginmanager
+          ./connectors/pluginruntime
