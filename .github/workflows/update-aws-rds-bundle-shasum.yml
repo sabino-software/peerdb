@@ -23,8 +23,11 @@ env:
 
 jobs:
   update-rds-bundle-shasum:
-    # Forks can opt in manually without inheriting the upstream daily updater.
-    if: github.event_name == 'workflow_dispatch' || !github.event.repository.fork
+    # Keep this fork's daily PR-only updates; other forks must opt in manually.
+    if: >-
+      github.event_name == 'workflow_dispatch' ||
+      !github.event.repository.fork ||
+      github.repository == 'sabino-software/peerdb'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
